@@ -1,7 +1,10 @@
 import time, os, glob, string
 from .. import hook, bar, manager, xkeysyms, xcbq
 import base
-
+try:
+    import cPickle as pickle
+except ImportError:
+    import pickle
 
 class NullCompleter:
     def actual(self, qtile):
@@ -106,7 +109,7 @@ class CommandCompleter:
                                             os.path.basename(cmd),
                                             cmd
                                         ),
-                                        
+
                                     )
                         except OSError:
                             pass
@@ -121,6 +124,75 @@ class CommandCompleter:
         return ret[0]
 
 
+class History(list):
+    current_pos = 0
+    original_line = None
+    _keysyms = ["Up", "Down", "Page_Up", "Page_Down"]
+    keysyms = [xkeysyms.keysyms[val] for val in _keysyms]
+
+    def handleKeySym(self, keysym, txt):
+        if self.original_line is None:
+            self.original_line = txt
+
+        if not self:
+            return
+        print self.current_pos, len(self), self.original_line
+        if keysym == xkeysyms.keysyms["Up"]:
+            if self.current_pos < len(self):
+                self.current_pos += 1
+            else:
+                return
+        elif keysym == xkeysyms.keysyms["Down"]:
+            if self.current_pos > 0:
+                self.current_pos -= 1
+            else:
+                return
+        elif keysym == xkeysyms.keysyms["Page_Up"]:
+            self.current_pos = len(self)
+        elif keysym == xkeysyms.keysyms["Page_Down"]:
+            self.current_pos = 0
+
+        if self.current_pos == 0:
+            return self.original_line
+        else:
+            return self[self.current_pos - 1]
+
+    def cleanup(self):
+        return
+
+
+class TransientHistory(History):
+    def __init__(self, qtile, name):
+        self.qtile = qtile
+
+
+class PersistentHistory(History):
+    def __init__(self, qtile, name):
+        print "Persistent History"
+        self.qtile = qtile
+        data_dir = os.environ.get("XDG_DATA_HOME") or \
+            (os.environ["HOME"] + "/.local/share")
+        qtile_dir = data_dir + "/qtile"
+        if not os.path.exists(qtile_dir):
+            os.mkdir(qtile_dir)
+        elif os.path.isfile(qtile_dir):
+            return # Just exist as an empty history
+        self.filename = "{0}/{1}.hist".format(qtile_dir, name)
+        print "Foobar: " + self.filename
+        if not os.path.isfile(self.filename):
+            return
+
+        with open(self.filename) as hist_file:
+            loaded_data = pickle.load(hist_file)
+        if isinstance(loaded_data, list):
+            print loaded_data
+            self[:] = loaded_data
+
+    def cleanup(self):
+        with open(self.filename, "w") as hist_file:
+            pickle.dump(list(self), hist_file)
+
+
 class Prompt(base._TextBox):
     """
         A widget that prompts for user input. Input should be started using the
@@ -131,6 +203,11 @@ class Prompt(base._TextBox):
         "group": GroupCompleter,
         None: NullCompleter
     }
+    histories = {
+        "cmd": PersistentHistory,
+        "group": TransientHistory,
+        None: TransientHistory,
+        }
     defaults = manager.Defaults(
         ("font", "Arial", "Font"),
         ("fontsize", None, "Font pixel size. Calculated if None."),
@@ -145,6 +222,8 @@ class Prompt(base._TextBox):
         self.active = False
         self.blink = False
         self.completer = None
+        self.history = None
+        self.userentered = 0
 
     def _configure(self, qtile, bar):
         base._TextBox._configure(self, qtile, bar)
@@ -164,6 +243,7 @@ class Prompt(base._TextBox):
         self.userInput = ""
         self.callback = callback
         self.completer = self.completers[complete](self.qtile)
+        self.history = self.histories[complete](self.qtile, complete)
         self._update()
         self.bar.widget_grab_keyboard(self)
 
@@ -190,19 +270,29 @@ class Prompt(base._TextBox):
         """
         keysym = self.qtile.conn.keycode_to_keysym(e.detail, e.state)
         if keysym == xkeysyms.keysyms['Tab']:
-            self.userInput = self.completer.complete(self.userInput)
+            user_input = self.userInput[:self.userentered]
+            self.userInput = self.completer.complete(user_input)
+        elif keysym in self.history.keysyms:
+            user_input = self.userInput[:self.userentered]
+            hist = self.history.handleKeySym(keysym, user_input)
+            if hist is not None:
+                self.userInput = hist
         else:
             self.completer.reset()
             if keysym < 127 and chr(keysym) in string.printable:
                 # No LookupString in XCB... oh, the shame! Unicode users beware!
                 self.userInput += chr(keysym)
+                self.userentered = len(self.userInput)
             elif keysym == xkeysyms.keysyms['BackSpace'] and len(self.userInput) > 0:
                 self.userInput = self.userInput[:-1]
             elif keysym == xkeysyms.keysyms['Escape']:
                 self.active = False
+                self.history.cleanup()
                 self.bar.widget_ungrab_keyboard()
             elif keysym == xkeysyms.keysyms['Return']:
                 self.active = False
+                self.history.insert(0, self.userInput)
+                self.history.cleanup()
                 self.bar.widget_ungrab_keyboard()
                 self.callback(self.userInput)
         self._update()
