@@ -189,8 +189,11 @@ class PersistentHistory(History):
             self[:] = loaded_data
 
     def cleanup(self):
-        with open(self.filename, "w") as hist_file:
-            pickle.dump(list(self), hist_file)
+        try:
+            with open(self.filename, "w") as hist_file:
+                pickle.dump(list(self), hist_file)
+        except IOError:
+            return
 
 
 class Prompt(base._TextBox):
