@@ -136,7 +136,7 @@ class History(list):
 
         if not self:
             return
-        print self.current_pos, len(self), self.original_line
+
         if keysym == xkeysyms.keysyms["Up"]:
             if self.current_pos < len(self):
                 self.current_pos += 1
@@ -168,7 +168,6 @@ class TransientHistory(History):
 
 class PersistentHistory(History):
     def __init__(self, qtile, name):
-        print "Persistent History"
         self.qtile = qtile
         data_dir = os.environ.get("XDG_DATA_HOME") or \
             (os.environ["HOME"] + "/.local/share")
@@ -178,14 +177,13 @@ class PersistentHistory(History):
         elif os.path.isfile(qtile_dir):
             return # Just exist as an empty history
         self.filename = "{0}/{1}.hist".format(qtile_dir, name)
-        print "Foobar: " + self.filename
+
         if not os.path.isfile(self.filename):
             return
 
         with open(self.filename) as hist_file:
             loaded_data = pickle.load(hist_file)
         if isinstance(loaded_data, list):
-            print loaded_data
             self[:] = loaded_data
 
     def cleanup(self):
@@ -319,4 +317,3 @@ class Prompt(base._TextBox):
             text = self.text,
             active = self.active,
         )
-
